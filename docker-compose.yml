@@ -1,0 +1,9 @@
+services:
+  ipsi_agent:
+    # build: .
+    image: ubuntu:22.04
+    container_name: ipsi_agent
+    command: sleep infinity
+    volumes:
+      - .:/app
+    working_dir: /app
