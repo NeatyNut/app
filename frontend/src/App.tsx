@@ -1,4 +1,4 @@
-import { useState, type ChangeEvent } from 'react'
+import { useMemo, useState, type ChangeEvent } from 'react'
 import './App.css'
 
 type SchoolType = 'general' | 'special' | 'vocational' | 'ged'
@@ -28,6 +28,45 @@ interface ConsultingState {
   interest: string
 }
 
+type Strategy = '상향' | '적정' | '안정'
+
+interface RecommendationCard {
+  strategy: Strategy
+  university: string
+  college: string
+  department: string
+  admissionType: string
+  admissionName: string
+  seats: number
+  score: number
+  predictedCut: number
+  gradeGap: number
+  csatLevel: number
+  naptchiRisk: boolean
+  postCsatEvent: boolean
+  reasons: string[]
+  trace: Array<{
+    year: number
+    cut70: number
+    competitionRate: number
+    changeType: string
+  }>
+  report: string
+}
+
+interface RecommendationResponse {
+  studentGrade: number
+  searchRange: [number, number]
+  dataMode: 'mvp_estimated_metrics'
+  summary: {
+    totalCandidates: number
+    tracedCandidates: number
+    selectedCards: number
+    strategyCounts: Record<Strategy, number>
+  }
+  cards: RecommendationCard[]
+}
+
 declare global {
   interface Window {
     electron?: {
@@ -45,6 +84,9 @@ const subjects: Array<{ key: Subject; label: string }> = [
 ]
 
 function App() {
+  const [result, setResult] = useState<RecommendationResponse | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState('')
   const [formData, setFormData] = useState<ConsultingState>({
     gender: 'male',
     gradYear: '2024',
@@ -59,6 +101,8 @@ function App() {
     priority: 50,
     interest: '',
   })
+
+  const gradeAverage = useMemo(() => calculateGradeAverage(formData), [formData])
 
   const handleChange = (
     e: ChangeEvent<HTMLSelectElement | HTMLInputElement>,
@@ -85,13 +129,38 @@ function App() {
     }))
   }
 
-  const startConsulting = (): void => {
-    if (window.electron) {
-      window.electron.send('start-agent', formData)
+  const startConsulting = async (): Promise<void> => {
+    setError('')
+
+    if (!gradeAverage) {
+      setError('국·수·영·사·과 내신 등급을 최소 1개 이상 입력해 주세요.')
       return
     }
 
-    console.warn('Electron API not found. Data:', formData)
+    if (window.electron) {
+      window.electron.send('start-agent', formData)
+    }
+
+    setIsLoading(true)
+
+    try {
+      const response = await fetch('http://localhost:4000/recommendations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ grade_average: gradeAverage }),
+      })
+
+      if (!response.ok) {
+        throw new Error('추천 API 응답이 올바르지 않습니다.')
+      }
+
+      const nextResult = (await response.json()) as RecommendationResponse
+      setResult(nextResult)
+    } catch (apiError) {
+      setError('백엔드 서버 연결을 확인해 주세요. 기본 포트는 4000입니다.')
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -111,7 +180,7 @@ function App() {
 
         <div className="sidebar-footer">
           <span className="status-dot" />
-          Gemma 4 연결 대기 중
+          Ontology RAG MVP 대기 중
         </div>
       </nav>
 
@@ -119,15 +188,15 @@ function App() {
         <header className="page-header">
           <div>
             <p className="section-kicker">Strategy Intake</p>
-            <h2>맞춤형 컨설팅 정보 입력</h2>
+            <h2>2027 수시 6카드 추천</h2>
             <p className="page-copy">
-              입력하신 데이터를 기반으로 Gemma 4가 최적의 수시 전략을
-              분석합니다.
+              국·수·영·사·과 내신 평균을 기반으로 4개년 전형 추적과
+              규칙 기반 Reranking을 실행합니다.
             </p>
           </div>
           <div className="header-card">
-            <span>현재 분석 모드</span>
-            <strong>학생부 종합 + 교과 균형 추천</strong>
+            <span>현재 평균 등급</span>
+            <strong>{gradeAverage ? `${gradeAverage.toFixed(2)} 등급` : '입력 대기'}</strong>
           </div>
         </header>
 
@@ -269,12 +338,85 @@ function App() {
           </div>
         </section>
 
-        <button className="cta-button" onClick={startConsulting}>
-          Gemma 4 에이전트 분석 시작
+        {error && <div className="error-banner">{error}</div>}
+
+        <button className="cta-button" onClick={startConsulting} disabled={isLoading}>
+          {isLoading ? '추천 후보 추적 중...' : 'Ontology RAG 추천 실행'}
         </button>
+
+        {result && (
+          <section className="result-section">
+            <div className="result-header">
+              <div>
+                <p className="section-kicker">Recommendation Report</p>
+                <h3>2027학년도 수시 추천 6카드</h3>
+              </div>
+              <div className="summary-strip">
+                <span>탐색 {result.searchRange[0]}~{result.searchRange[1]}</span>
+                <span>후보 {result.summary.tracedCandidates}개</span>
+                <span>상향 {result.summary.strategyCounts.상향}</span>
+                <span>적정 {result.summary.strategyCounts.적정}</span>
+                <span>안정 {result.summary.strategyCounts.안정}</span>
+              </div>
+            </div>
+
+            <div className="cards-grid">
+              {result.cards.map((card) => (
+                <article className="recommend-card" key={`${card.university}-${card.department}-${card.admissionName}`}>
+                  <div className="card-topline">
+                    <span className={`strategy-badge strategy-${card.strategy}`}>
+                      {card.strategy}
+                    </span>
+                    <strong>{card.score.toFixed(1)}</strong>
+                  </div>
+
+                  <h4>{card.university} {card.department}</h4>
+                  <p className="admission-line">{card.admissionName} · {card.admissionType}</p>
+
+                  <div className="metric-row">
+                    <span>예측컷 <strong>{card.predictedCut.toFixed(2)}</strong></span>
+                    <span>모집 <strong>{card.seats}</strong></span>
+                    <span>최저 <strong>{card.csatLevel || '없음'}</strong></span>
+                  </div>
+
+                  <div className="reason-list">
+                    {card.reasons.map((reason) => (
+                      <span key={reason}>{reason}</span>
+                    ))}
+                  </div>
+
+                  <div className="trace-line" aria-label="4개년 전형 추적">
+                    {card.trace.map((trace) => (
+                      <div className="trace-node" key={trace.year}>
+                        <strong>{trace.year}</strong>
+                        <span>{trace.cut70.toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <p className="report-copy">{card.report}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
       </main>
     </div>
   )
+}
+
+function calculateGradeAverage(formData: ConsultingState): number | null {
+  const values = Object.values(formData.grades).flatMap((year) =>
+    subjects
+      .map((subject) => Number(year[subject.key]))
+      .filter((value) => Number.isFinite(value) && value >= 1 && value <= 9),
+  )
+
+  if (values.length === 0) {
+    return null
+  }
+
+  return Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 100) / 100
 }
 
 export default App

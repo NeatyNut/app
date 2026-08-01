@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
-  "type": "module",
   "scripts": {
     "dev": "nodemon --watch . --ext ts --exec ts-node index.ts",
     "start": "ts-node index.ts",
